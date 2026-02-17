@@ -5,9 +5,11 @@ const BASE_URL = `https://graph.facebook.com/${API_VERSION}`;
 
 export async function sendTextMessage(
   to: string,
-  text: string
+  text: string,
+  phoneNumberId?: string
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  const url = `${BASE_URL}/${config.META_PHONE_NUMBER_ID}/messages`;
+  const id = phoneNumberId ?? config.META_PHONE_NUMBER_ID;
+  const url = `${BASE_URL}/${id}/messages`;
 
   const res = await fetch(url, {
     method: "POST",

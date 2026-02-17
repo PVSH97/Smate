@@ -60,6 +60,8 @@ async function processWebhook(
       const messages = change.value.messages;
       if (!messages) continue;
 
+      const phoneNumberId = change.value.metadata.phone_number_id;
+
       for (const msg of messages) {
         // Only handle text messages for now
         if (msg.type !== "text" || !msg.text) continue;
@@ -69,7 +71,7 @@ async function processWebhook(
         const contactName =
           change.value.contacts?.[0]?.profile.name ?? "Unknown";
 
-        console.log(`[webhook] Message from ${contactName} (${phone}): ${text}`);
+        console.log(`[webhook] Message from ${contactName} (${phone}) to ${phoneNumberId}: ${text}`);
 
         // Simple rate limiting
         const lastTime = lastReplyTime.get(phone) ?? 0;
@@ -83,7 +85,7 @@ async function processWebhook(
           const reply = await generateReply(phone, text);
           console.log(`[webhook] Reply to ${phone}: ${reply}`);
 
-          const result = await sendTextMessage(phone, reply);
+          const result = await sendTextMessage(phone, reply, phoneNumberId);
           if (!result.success) {
             console.error(`[webhook] Failed to send: ${result.error}`);
           }
