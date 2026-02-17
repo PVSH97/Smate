@@ -7,12 +7,16 @@ import { supabase } from "../lib/supabase.js";
 export async function resolveWaIdentity(
   phoneNumberId: string,
 ): Promise<{ id: string; orgId: string } | null> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("wa_identities")
     .select("id, org_id")
     .eq("phone_number_id", phoneNumberId)
     .single();
 
+  if (error) {
+    console.error(`[db] resolveWaIdentity error:`, error.message, error.code);
+    return null;
+  }
   if (!data) return null;
   return { id: data.id, orgId: data.org_id };
 }

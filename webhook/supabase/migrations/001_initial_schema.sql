@@ -245,4 +245,5 @@ insert into public.orgs (id, name, settings) values
 
 -- WhatsApp identities (both phone numbers from the project)
 insert into public.wa_identities (org_id, phone_number_id, display_phone, label) values
-  ('a0000000-0000-0000-0000-000000000001', '1017618681428720', '+56 9 XXXX XXXX', 'Primary');
+  ('a0000000-0000-0000-0000-000000000001', '1017618681428720', '+56 9 XXXX XXXX', 'Primary'),
+  ('a0000000-0000-0000-0000-000000000001', '931975163342204', '+56 9 XXXX XXXX', 'Secondary');
