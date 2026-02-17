@@ -44,8 +44,8 @@ webhook.post("/", async (c) => {
     return c.text("OK", 200);
   }
 
-  // Process async (don't block the response)
-  processWebhook(parsed.data).catch((err) =>
+  // Must await in serverless — function dies after response
+  await processWebhook(parsed.data).catch((err) =>
     console.error("[webhook] Processing error:", err)
   );
 
