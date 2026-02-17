@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env
+*.log
+.mcp.json
+mcp-servers/meta-whatsapp/venv/
