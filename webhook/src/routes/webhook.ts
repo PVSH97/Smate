@@ -2,6 +2,12 @@ import { Hono } from "hono";
 import { config } from "../config.js";
 import { verifySignature } from "../lib/signature.js";
 import { webhookBodySchema } from "../lib/types.js";
+import {
+  resolveWaIdentity,
+  resolveCustomer,
+  resolveConversation,
+  saveMessage,
+} from "../services/db.js";
 import { generateReply } from "../services/claude.js";
 import { sendTextMessage } from "../services/whatsapp.js";
 
@@ -37,7 +43,6 @@ webhook.post("/", async (c) => {
     return c.text("Invalid signature", 401);
   }
 
-  // Return 200 immediately (Meta requires fast response)
   const parsed = webhookBodySchema.safeParse(JSON.parse(rawBody));
   if (!parsed.success) {
     console.log("[webhook] Invalid payload:", parsed.error.message);
@@ -46,14 +51,14 @@ webhook.post("/", async (c) => {
 
   // Must await in serverless — function dies after response
   await processWebhook(parsed.data).catch((err) =>
-    console.error("[webhook] Processing error:", err)
+    console.error("[webhook] Processing error:", err),
   );
 
   return c.text("OK", 200);
 });
 
 async function processWebhook(
-  body: ReturnType<typeof webhookBodySchema.parse>
+  body: ReturnType<typeof webhookBodySchema.parse>,
 ): Promise<void> {
   for (const entry of body.entry) {
     for (const change of entry.changes) {
@@ -61,6 +66,13 @@ async function processWebhook(
       if (!messages) continue;
 
       const phoneNumberId = change.value.metadata.phone_number_id;
+
+      // Resolve WA identity → org
+      const identity = await resolveWaIdentity(phoneNumberId);
+      if (!identity) {
+        console.log(`[webhook] Unknown phone_number_id: ${phoneNumberId}`);
+        continue;
+      }
 
       for (const msg of messages) {
         // Only handle text messages for now
@@ -71,7 +83,9 @@ async function processWebhook(
         const contactName =
           change.value.contacts?.[0]?.profile.name ?? "Unknown";
 
-        console.log(`[webhook] Message from ${contactName} (${phone}) to ${phoneNumberId}: ${text}`);
+        console.log(
+          `[webhook] Message from ${contactName} (${phone}) to ${phoneNumberId}: ${text}`,
+        );
 
         // Simple rate limiting
         const lastTime = lastReplyTime.get(phone) ?? 0;
@@ -82,7 +96,30 @@ async function processWebhook(
         lastReplyTime.set(phone, Date.now());
 
         try {
-          const reply = await generateReply(phone, text);
+          // Resolve customer and conversation
+          const customer = await resolveCustomer(
+            identity.orgId,
+            phone,
+            contactName,
+          );
+          const conversationId = await resolveConversation(
+            customer.id,
+            identity.id,
+          );
+
+          // Save inbound message
+          await saveMessage(conversationId, "user", text, msg.id);
+
+          // Generate reply with tool context
+          const reply = await generateReply(conversationId, text, {
+            customerId: customer.id,
+            conversationId,
+            orgId: identity.orgId,
+          });
+
+          // Save outbound message
+          await saveMessage(conversationId, "assistant", reply);
+
           console.log(`[webhook] Reply to ${phone}: ${reply}`);
 
           const result = await sendTextMessage(phone, reply, phoneNumberId);
@@ -90,7 +127,10 @@ async function processWebhook(
             console.error(`[webhook] Failed to send: ${result.error}`);
           }
         } catch (err) {
-          console.error(`[webhook] Error processing message from ${phone}:`, err);
+          console.error(
+            `[webhook] Error processing message from ${phone}:`,
+            err,
+          );
         }
       }
     }
