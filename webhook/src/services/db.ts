@@ -176,7 +176,7 @@ export async function findCustomer(
 export async function createCustomerTool(
   ctx: ToolContext,
   input: {
-    phone: string;
+    phone?: string;
     name: string;
     trade_name?: string;
     legal_name?: string;
@@ -191,7 +191,7 @@ export async function createCustomerTool(
     .from("customers")
     .insert({
       org_id: ctx.orgId,
-      phone: input.phone,
+      phone: input.phone ?? `unknown-${Date.now()}`,
       name: input.name,
       trade_name: input.trade_name,
       legal_name: input.legal_name,
