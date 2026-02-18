@@ -94,3 +94,21 @@ export async function getConversationState(
 
   return (data?.conv_state as "normal" | "awaiting_confirmation") ?? "normal";
 }
+
+/** Get summaries of recently confirmed/discarded drafts to prevent re-extraction */
+export async function getRecentDraftSummaries(
+  conversationId: string,
+  limit = 2,
+): Promise<string[]> {
+  const { data } = await supabase
+    .from("drafts")
+    .select("summary_text, status")
+    .eq("conversation_id", conversationId)
+    .in("status", ["confirmed", "discarded"])
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  return (data ?? []).map(
+    (d) => `[${d.status === "confirmed" ? "GUARDADO" : "DESCARTADO"}] ${d.summary_text}`,
+  );
+}
