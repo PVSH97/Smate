@@ -116,7 +116,7 @@ export async function saveMessage(
 
 export async function getConversationHistory(
   conversationId: string,
-  limit = 20,
+  limit = 3,
 ): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
   const { data } = await supabase
     .from("messages")
@@ -126,6 +126,26 @@ export async function getConversationHistory(
     .limit(limit);
 
   return (data ?? []) as Array<{ role: "user" | "assistant"; content: string }>;
+}
+
+export async function searchMessages(
+  conversationId: string,
+  query: string,
+): Promise<Array<{ role: string; content: string; created_at: string }>> {
+  const tsQuery = query.split(/\s+/).join(" & ");
+  const { data } = await supabase
+    .from("messages")
+    .select("role, content, created_at")
+    .eq("conversation_id", conversationId)
+    .textSearch("content_tsv", tsQuery, { config: "spanish" })
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  return (data ?? []) as Array<{
+    role: string;
+    content: string;
+    created_at: string;
+  }>;
 }
 
 // ============================================================
@@ -138,40 +158,179 @@ export interface ToolContext {
   orgId: string;
 }
 
-export async function lookupCustomer(
+export async function findCustomer(
   ctx: ToolContext,
-  input: { phone?: string; name?: string },
+  input: { query: string; phone?: string; rut?: string },
 ): Promise<object> {
-  let query = supabase
-    .from("customers")
-    .select("id, phone, name, business_name, industry, metadata, created_at")
-    .eq("org_id", ctx.orgId);
+  const { data, error } = await supabase.rpc("search_customers_fuzzy", {
+    p_org_id: ctx.orgId,
+    p_query: input.query,
+    p_phone: input.phone ?? null,
+    p_rut: input.rut ?? null,
+  });
 
-  if (input.phone) {
-    query = query.eq("phone", input.phone);
-  } else if (input.name) {
-    query = query.or(
-      `name.ilike.%${input.name}%,business_name.ilike.%${input.name}%`,
-    );
-  }
-
-  const { data } = await query.limit(5);
-  return { customers: data ?? [], count: data?.length ?? 0 };
+  if (error) return { results: [], error: error.message };
+  return { results: data ?? [], count: (data as unknown[])?.length ?? 0 };
 }
 
-export async function saveExtraction(
+export async function createCustomerTool(
   ctx: ToolContext,
-  input: { extraction_type: string; data: object; confidence?: number },
+  input: {
+    phone: string;
+    name: string;
+    trade_name?: string;
+    legal_name?: string;
+    rut?: string;
+    person_type?: string;
+    industry?: string;
+    address_commune?: string;
+    address_city?: string;
+  },
 ): Promise<object> {
   const { data, error } = await supabase
-    .from("extractions")
+    .from("customers")
     .insert({
-      customer_id: ctx.customerId,
-      conversation_id: ctx.conversationId,
-      extraction_type: input.extraction_type,
-      data: input.data,
-      confidence: input.confidence,
+      org_id: ctx.orgId,
+      phone: input.phone,
+      name: input.name,
+      trade_name: input.trade_name,
+      legal_name: input.legal_name,
+      rut: input.rut,
+      person_type: input.person_type,
+      industry: input.industry,
+      address_commune: input.address_commune,
+      address_city: input.address_city,
     })
+    .select("id, name, phone")
+    .single();
+
+  if (error) return { success: false, error: error.message };
+  return { success: true, customer: data };
+}
+
+export async function getCustomerCard(
+  ctx: ToolContext,
+  input: { customer_id: string },
+): Promise<object> {
+  const [customer, claims, signals, tasks, opportunities] = await Promise.all([
+    supabase
+      .from("customers")
+      .select(
+        "id, phone, name, trade_name, legal_name, rut, industry, person_type, address_commune, address_city, created_at",
+      )
+      .eq("id", input.customer_id)
+      .single(),
+    supabase
+      .from("claims")
+      .select(
+        "claim_type, product_name, value_normalized, value_unit, raw_value, observed_at, confidence",
+      )
+      .eq("customer_id", input.customer_id)
+      .order("observed_at", { ascending: false })
+      .limit(20),
+    supabase
+      .from("customer_signals")
+      .select("signal_type, content, created_at")
+      .eq("customer_id", input.customer_id)
+      .order("created_at", { ascending: false })
+      .limit(10),
+    supabase
+      .from("tasks")
+      .select("title, priority, status, due_date")
+      .eq("customer_id", input.customer_id)
+      .neq("status", "done")
+      .order("created_at", { ascending: false })
+      .limit(10),
+    supabase
+      .from("opportunities")
+      .select("title, status, estimated_value, confidence")
+      .eq("customer_id", input.customer_id)
+      .order("created_at", { ascending: false })
+      .limit(5),
+  ]);
+
+  return {
+    customer: customer.data,
+    claims: claims.data ?? [],
+    signals: signals.data ?? [],
+    open_tasks: tasks.data ?? [],
+    opportunities: opportunities.data ?? [],
+  };
+}
+
+export async function createClaims(
+  ctx: ToolContext,
+  input: {
+    claims: Array<{
+      claim_type: string;
+      product_name?: string;
+      product_spec?: string;
+      product_format?: string;
+      product_origin?: string;
+      product_supplier?: string;
+      value_normalized?: number;
+      value_unit?: string;
+      raw_value: string;
+      raw_unit?: string;
+      conversion_factor?: number;
+      observed_at?: string;
+      source?: string;
+      confidence?: number;
+    }>;
+  },
+): Promise<object> {
+  const rows = input.claims.map((c) => ({
+    customer_id: ctx.customerId,
+    org_id: ctx.orgId,
+    conversation_id: ctx.conversationId,
+    claim_type: c.claim_type,
+    product_name: c.product_name,
+    product_spec: c.product_spec,
+    product_format: c.product_format,
+    product_origin: c.product_origin,
+    product_supplier: c.product_supplier,
+    value_normalized: c.value_normalized,
+    value_unit: c.value_unit,
+    raw_value: c.raw_value,
+    raw_unit: c.raw_unit,
+    conversion_factor: c.conversion_factor ?? 1,
+    observed_at: c.observed_at ?? new Date().toISOString(),
+    source: c.source ?? "whatsapp",
+    confidence: c.confidence,
+  }));
+
+  const { data, error } = await supabase
+    .from("claims")
+    .insert(rows)
+    .select("id");
+
+  if (error) return { success: false, error: error.message };
+  return {
+    success: true,
+    count: data?.length ?? 0,
+    ids: data?.map((r) => r.id),
+  };
+}
+
+export async function upsertSkuPackaging(
+  ctx: ToolContext,
+  input: {
+    sku: string;
+    case_weight_kg: number;
+    units_per_case?: number;
+  },
+): Promise<object> {
+  const { data, error } = await supabase
+    .from("sku_packaging")
+    .upsert(
+      {
+        org_id: ctx.orgId,
+        sku: input.sku,
+        case_weight_kg: input.case_weight_kg,
+        units_per_case: input.units_per_case,
+      },
+      { onConflict: "org_id,sku" },
+    )
     .select("id")
     .single();
 
@@ -179,12 +338,18 @@ export async function saveExtraction(
   return { success: true, id: data!.id };
 }
 
-export async function logVisit(
+// ============================================================
+// Enhanced tools (Phase 4) — batch + enriched
+// ============================================================
+
+export async function createVisit(
   ctx: ToolContext,
   input: {
     summary: string;
     key_points: string[];
     next_steps?: string[];
+    objections?: string[];
+    next_visit_requirements?: string[];
     visited_at?: string;
   },
 ): Promise<object> {
@@ -192,10 +357,13 @@ export async function logVisit(
     .from("visits")
     .insert({
       customer_id: ctx.customerId,
+      org_id: ctx.orgId,
       conversation_id: ctx.conversationId,
       summary: input.summary,
       key_points: input.key_points,
       next_steps: input.next_steps ?? [],
+      objections: input.objections ?? [],
+      next_visit_requirements: input.next_visit_requirements ?? [],
       visited_at: input.visited_at ?? new Date().toISOString(),
     })
     .select("id")
@@ -205,25 +373,95 @@ export async function logVisit(
   return { success: true, id: data!.id };
 }
 
-export async function createTask(
+export async function createTasks(
+  ctx: ToolContext,
+  input: {
+    tasks: Array<{
+      title: string;
+      description?: string;
+      priority?: number;
+      due_date?: string;
+    }>;
+  },
+): Promise<object> {
+  const rows = input.tasks.map((t) => ({
+    org_id: ctx.orgId,
+    customer_id: ctx.customerId,
+    conversation_id: ctx.conversationId,
+    title: t.title,
+    description: t.description,
+    priority: t.priority ?? 3,
+    due_date: t.due_date,
+  }));
+
+  const { data, error } = await supabase
+    .from("tasks")
+    .insert(rows)
+    .select("id");
+
+  if (error) return { success: false, error: error.message };
+  return {
+    success: true,
+    count: data?.length ?? 0,
+    ids: data?.map((r) => r.id),
+  };
+}
+
+export async function createSignals(
+  ctx: ToolContext,
+  input: {
+    signals: Array<{
+      signal_type: string;
+      content: string;
+    }>;
+  },
+): Promise<object> {
+  const rows = input.signals.map((s) => ({
+    customer_id: ctx.customerId,
+    conversation_id: ctx.conversationId,
+    signal_type: s.signal_type,
+    content: s.content,
+  }));
+
+  const { data, error } = await supabase
+    .from("customer_signals")
+    .insert(rows)
+    .select("id");
+
+  if (error) return { success: false, error: error.message };
+  return {
+    success: true,
+    count: data?.length ?? 0,
+    ids: data?.map((r) => r.id),
+  };
+}
+
+export async function createOpportunity(
   ctx: ToolContext,
   input: {
     title: string;
     description?: string;
-    priority?: string;
-    due_date?: string;
+    stage?: string;
+    estimated_value?: number;
+    probability?: number;
+    reason_no_progress?: string;
+    next_step?: string;
+    confidence?: number;
   },
 ): Promise<object> {
   const { data, error } = await supabase
-    .from("tasks")
+    .from("opportunities")
     .insert({
-      org_id: ctx.orgId,
       customer_id: ctx.customerId,
-      conversation_id: ctx.conversationId,
+      org_id: ctx.orgId,
       title: input.title,
       description: input.description,
-      priority: input.priority ?? "medium",
-      due_date: input.due_date,
+      stage: input.stage ?? "exploracion",
+      estimated_value: input.estimated_value,
+      probability: input.probability,
+      reason_no_progress: input.reason_no_progress,
+      next_step: input.next_step,
+      confidence: input.confidence,
     })
     .select("id")
     .single();
@@ -232,53 +470,36 @@ export async function createTask(
   return { success: true, id: data!.id };
 }
 
-export async function saveSignal(
-  ctx: ToolContext,
-  input: { signal_type: string; content: string },
-): Promise<object> {
-  const { data, error } = await supabase
-    .from("customer_signals")
-    .insert({
-      customer_id: ctx.customerId,
-      conversation_id: ctx.conversationId,
-      signal_type: input.signal_type,
-      content: input.content,
-    })
-    .select("id")
-    .single();
-
-  if (error) return { success: false, error: error.message };
-  return { success: true, id: data!.id };
-}
-
-export async function savePurchase(
+export async function createCustomerBrief(
   ctx: ToolContext,
   input: {
-    product: string;
-    supplier?: string;
-    unit_price?: number;
-    quantity?: number;
-    unit?: string;
-    total?: number;
-    purchased_at?: string;
+    brief: string;
+    key_facts?: object[];
+    objective?: string;
+    talk_tracks?: string[];
+    recommended_offer?: string;
+    alternatives?: string[];
+    risks?: string[];
+    required_assets?: string[];
+    open_questions?: string[];
+    reference_ids?: string[];
   },
 ): Promise<object> {
   const { data, error } = await supabase
-    .from("customer_purchases")
+    .from("customer_briefs")
     .insert({
       customer_id: ctx.customerId,
-      conversation_id: ctx.conversationId,
-      product: input.product,
-      supplier: input.supplier,
-      unit_price: input.unit_price,
-      quantity: input.quantity,
-      unit: input.unit,
-      total:
-        input.total ??
-        (input.unit_price && input.quantity
-          ? input.unit_price * input.quantity
-          : undefined),
-      purchased_at: input.purchased_at ?? new Date().toISOString(),
+      org_id: ctx.orgId,
+      brief: input.brief,
+      key_facts: input.key_facts ?? [],
+      objective: input.objective,
+      talk_tracks: input.talk_tracks ?? [],
+      recommended_offer: input.recommended_offer,
+      alternatives: input.alternatives ?? [],
+      risks: input.risks ?? [],
+      required_assets: input.required_assets ?? [],
+      open_questions: input.open_questions ?? [],
+      reference_ids: input.reference_ids ?? [],
     })
     .select("id")
     .single();
