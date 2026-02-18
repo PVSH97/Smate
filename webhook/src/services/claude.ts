@@ -45,7 +45,8 @@ Ejemplos de consultas:
 - "Qué clientes tengo?" → find_customer con query amplio
 
 ## Reglas de extracción (CRÍTICAS)
-- Solo extrae datos del MENSAJE ACTUAL del usuario. El historial es contexto, NO lo re-extraigas.
+- Los mensajes del historial tienen el tag [HISTORIAL - contexto, NO extraer]. NUNCA extraigas datos de ellos.
+- Solo extrae datos del mensaje con tag [MENSAJE ACTUAL - procesa este]. SOLO ese mensaje.
 - Si el mensaje actual contiene datos comerciales NUEVOS → DEBES llamar \`parse_to_draft\`. Sin excepciones.
 - Si el mensaje actual es casual (gracias, ok, saludos) → responde normalmente, SIN draft.
 - Si el mensaje actual es una PREGUNTA → usa herramientas de lectura, SIN draft.
@@ -232,12 +233,16 @@ async function runToolLoop(
     buildSystemPrompt(conversationId),
   ]);
 
+  // Annotate history to prevent re-extraction: tag old messages as context-only
   const messages: Anthropic.MessageParam[] = [
     ...history.map((m) => ({
       role: m.role as "user" | "assistant",
-      content: m.content,
+      content:
+        m.role === "user"
+          ? `[HISTORIAL - contexto, NO extraer]\n${m.content}`
+          : m.content,
     })),
-    { role: "user", content: userMessage },
+    { role: "user", content: `[MENSAJE ACTUAL - procesa este]\n${userMessage}` },
   ];
 
   // Debug: log what Claude receives
