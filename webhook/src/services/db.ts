@@ -116,16 +116,30 @@ export async function saveMessage(
 
 export async function getConversationHistory(
   conversationId: string,
-  limit = 3,
+  limit = 6,
 ): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
+  // Fetch most recent messages (descending), then reverse to chronological
   const { data } = await supabase
     .from("messages")
     .select("role, content")
     .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
     .limit(limit);
 
-  return (data ?? []) as Array<{ role: "user" | "assistant"; content: string }>;
+  const rows = ((data ?? []) as Array<{ role: "user" | "assistant"; content: string }>).reverse();
+
+  // Merge consecutive same-role messages (Anthropic requires alternating roles)
+  const merged: typeof rows = [];
+  for (const row of rows) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === row.role) {
+      last.content += `\n${row.content}`;
+    } else {
+      merged.push({ ...row });
+    }
+  }
+
+  return merged;
 }
 
 export async function searchMessages(
