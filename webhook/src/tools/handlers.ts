@@ -11,6 +11,15 @@ import {
   createCustomerBrief,
   upsertSkuPackaging,
   searchMessages,
+  getApprovalRequests,
+  listApprovalProviders,
+  createApprovalProvider,
+  createApprovalRequest,
+  updateApprovalRequest,
+  addApprovalEvent,
+  updateTaskStatus,
+  updateOpportunityStage,
+  updateCustomer,
 } from "../services/db.js";
 import { createDraft, type DraftItem } from "../services/drafts.js";
 
@@ -31,6 +40,10 @@ export async function handleToolCall(
       const results = await searchMessages(ctx.conversationId, query);
       return JSON.stringify({ results, count: results.length });
     }
+    case "get_approval_requests":
+      return JSON.stringify(await getApprovalRequests(ctx, input as never));
+    case "list_approval_providers":
+      return JSON.stringify(await listApprovalProviders(ctx));
     // Write tool (Mode B gateway)
     case "parse_to_draft": {
       const items = input.items as DraftItem[];
@@ -64,7 +77,10 @@ export async function executeDraftItem(
         result = await createSignals(ctx, normalizeSignalsInput(item.input));
         break;
       case "create_opportunity":
-        result = await createOpportunity(ctx, normalizeOpportunityInput(item.input));
+        result = await createOpportunity(
+          ctx,
+          normalizeOpportunityInput(item.input),
+        );
         break;
       case "create_claims":
         result = await createClaims(ctx, item.input as never);
@@ -74,6 +90,30 @@ export async function executeDraftItem(
         break;
       case "upsert_sku_packaging":
         result = await upsertSkuPackaging(ctx, item.input as never);
+        break;
+      case "create_approval_provider":
+        result = await createApprovalProvider(ctx, item.input as never);
+        break;
+      case "create_approval_request":
+        result = await createApprovalRequest(
+          ctx,
+          normalizeApprovalRequestInput(item.input),
+        );
+        break;
+      case "update_approval_request":
+        result = await updateApprovalRequest(ctx, item.input as never);
+        break;
+      case "add_approval_event":
+        result = await addApprovalEvent(ctx, item.input as never);
+        break;
+      case "update_task_status":
+        result = await updateTaskStatus(ctx, item.input as never);
+        break;
+      case "update_opportunity_stage":
+        result = await updateOpportunityStage(ctx, item.input as never);
+        break;
+      case "update_customer":
+        result = await updateCustomer(ctx, item.input as never);
         break;
       default:
         return { success: false, error: `Unknown tool: ${item.tool}` };
@@ -106,10 +146,19 @@ function normalizeSignalsInput(input: Record<string, unknown>): never {
 // Normalize Claude's opportunity input: ensure title exists
 function normalizeOpportunityInput(input: Record<string, unknown>): never {
   if (!input.title) {
-    input.title = (input.customer_name as string)
-      ?? (input.product_name as string)
-      ?? (input.description as string | undefined)?.slice(0, 60)
-      ?? "Oportunidad comercial";
+    input.title =
+      (input.customer_name as string) ??
+      (input.product_name as string) ??
+      (input.description as string | undefined)?.slice(0, 60) ??
+      "Oportunidad comercial";
+  }
+  return input as never;
+}
+
+// Normalize approval request: default submitted_at to today
+function normalizeApprovalRequestInput(input: Record<string, unknown>): never {
+  if (!input.submitted_at) {
+    input.submitted_at = new Date().toISOString().slice(0, 10);
   }
   return input as never;
 }

@@ -43,6 +43,9 @@ Ejemplos de consultas:
 - "Qué le vendemos a Restaurante El Puerto?" → find_customer → get_customer_card → muestra claims
 - "Qué tareas tengo pendientes con este cliente?" → get_customer_card → muestra open_tasks
 - "Qué clientes tengo?" → find_customer con query amplio
+- "Cuál es el estado de la aprobación de Cliente X?" → find_customer → get_approval_requests(customer_id)
+- "Qué aprobaciones están pendientes?" → get_approval_requests(status: "SUBMITTED")
+- "Cuánto fue aprobado para Cliente X?" → get_approval_requests(customer_id) → muestra authorized vs requested
 
 ## Reglas de extracción (CRÍTICAS)
 - Los mensajes del historial tienen el tag [HISTORIAL - contexto, NO extraer]. NUNCA extraigas datos de ellos.
@@ -57,8 +60,10 @@ Ejemplos de consultas:
 
 ## Herramientas de lectura
 - \`find_customer\`: Búsqueda fuzzy por nombre, teléfono o RUT. Úsala para buscar clientes mencionados. Si no aparece, NO bloquees: incluye los datos en el draft igual.
-- \`get_customer_card\`: Perfil completo del cliente (claims, señales, tareas, oportunidades). Úsala SIEMPRE cuando el vendedor pregunte sobre un cliente.
+- \`get_customer_card\`: Perfil completo del cliente (claims, señales, tareas, oportunidades, aprobaciones). Úsala SIEMPRE cuando el vendedor pregunte sobre un cliente.
 - \`search_messages\`: Busca mensajes antiguos por palabra clave.
+- \`get_approval_requests\`: Solicitudes de aprobación/crédito. Filtra por customer_id y/o status. Retorna proveedor y último evento.
+- \`list_approval_providers\`: Lista proveedores de aprobación configurados (aseguradoras, bancos, comités).
 
 ## Herramientas de escritura (vía parse_to_draft)
 Todas se envían dentro de \`parse_to_draft.items[].tool\`:
@@ -71,6 +76,17 @@ Todas se envían dentro de \`parse_to_draft.items[].tool\`:
 - \`create_customer_brief\`: Brief ejecutivo con objective, talk_tracks, recommended_offer, risks, open_questions
 - \`upsert_sku_packaging\`: Peso de caja por SKU (sku + case_weight_kg)
 - \`create_customer\`: Nuevo cliente. phone es opcional si no se conoce.
+
+Herramientas de aprobación/crédito:
+- \`create_approval_provider\`: Registrar proveedor de aprobación (name, provider_type, notes)
+- \`create_approval_request\`: Solicitud de crédito/aprobación (provider_name, request_type, requested_amount, requested_unit)
+- \`update_approval_request\`: Actualizar estado/decisión (request_id, status, authorized_amount, authorized_unit, decision_reason)
+- \`add_approval_event\`: Registrar seguimiento, apelación, documentos, notas (request_id, event_type, description)
+
+Herramientas de actualización:
+- \`update_task_status\`: Cambiar estado de tarea (task_id, status: pending|in_progress|done|cancelled|snoozed)
+- \`update_opportunity_stage\`: Cambiar etapa de oportunidad (opportunity_id, stage, probability, next_step)
+- \`update_customer\`: Actualizar datos del cliente (customer_id, name, trade_name, phone, rut, industry, address_commune, address_city)
 
 ## Schema exacto de create_claims
 \`\`\`
@@ -91,6 +107,55 @@ Todas se envían dentro de \`parse_to_draft.items[].tool\`:
 }
 \`\`\`
 Normalización: toneladas→kg (*1000), quintal→kg (*46), semanal→mensual (*4.33)
+
+## Schema de create_approval_request
+\`\`\`
+{
+  "provider_name": "Solunion",         // nombre del proveedor (busca automáticamente el ID)
+  "request_type": "CREDIT_LIMIT",      // CREDIT_LIMIT | CREDIT_INCREASE | PAYMENT_TERMS | FINANCING | COMPLIANCE_APPROVAL | OTHER
+  "requested_amount": 500,             // monto solicitado
+  "requested_unit": "UF",              // unidad (UF, CLP, USD, etc.)
+  "next_action": "Esperar respuesta",  // próximo paso
+  "priority": 3                        // 1-5 (default 3)
+}
+\`\`\`
+
+## Schema de update_approval_request
+\`\`\`
+{
+  "request_id": "uuid",               // ID de la solicitud a actualizar
+  "status": "APPROVED",               // SUBMITTED | IN_REVIEW | APPROVED | PARTIAL_APPROVED | REJECTED | APPEALED | CLOSED
+  "authorized_amount": 400,           // monto autorizado
+  "authorized_unit": "UF",
+  "decision_date": "2026-02-19",
+  "decision_reason": "Aprobado con límite reducido"
+}
+\`\`\`
+
+## Schema de add_approval_event
+\`\`\`
+{
+  "request_id": "uuid",
+  "event_type": "FOLLOWED_UP",        // SUBMITTED | FOLLOWED_UP | DECISION_RECEIVED | INTERNAL_LIMIT_SET | DOCS_REQUESTED | APPEAL_SUBMITTED | APPEAL_RESOLVED | NOTE
+  "description": "Llamé a Solunion, están revisando documentos"
+}
+\`\`\`
+
+## Reglas de extracción de aprobaciones
+Cuando el vendedor mencione:
+- "solicitud de crédito", "pedir crédito", "línea de crédito", "solicitar aprobación" → create_approval_request
+- "aprobaron", "rechazaron", "autorizaron X UF", "dieron línea de" → update_approval_request (necesitas request_id: primero busca con get_approval_requests)
+- "hice seguimiento", "llamé a Solunion/Coface", "me pidieron documentos" → add_approval_event (necesitas request_id)
+- Si menciona un proveedor que no conoces (no es Solunion, Coface, Comité Interno) → create_approval_provider + create_approval_request
+- "habilitamos internamente X para el cliente" → update_approval_request con internal_operational_limit
+
+## Reglas de extracción de actualizaciones
+Cuando el vendedor mencione:
+- "la tarea de X ya está lista", "terminé la tarea" → update_task_status(task_id, status: "done")
+- "cancela esa tarea", "ya no es necesario" → update_task_status(task_id, status: "cancelled")
+- "la oportunidad avanzó a cotización" → update_opportunity_stage(opportunity_id, stage)
+- "el teléfono de X cambió a...", "el RUT es..." → update_customer(customer_id, ...)
+- Para updates, PRIMERO busca el ID del recurso usando get_customer_card o find_customer
 
 ## Ejemplo de flujo de extracción
 Usuario: "Hoy visité a Pesquera del Sur, compran 2 toneladas de camarón a $6500/kg"
@@ -242,15 +307,26 @@ async function runToolLoop(
           ? `[HISTORIAL - contexto, NO extraer]\n${m.content}`
           : m.content,
     })),
-    { role: "user", content: `[MENSAJE ACTUAL - procesa este]\n${userMessage}` },
+    {
+      role: "user",
+      content: `[MENSAJE ACTUAL - procesa este]\n${userMessage}`,
+    },
   ];
 
   // Debug: log what Claude receives
   console.log(`[claude] System prompt length: ${systemPrompt.length}`);
-  console.log(`[claude] Messages (${messages.length}):`, JSON.stringify(messages.map((m) => ({
-    role: m.role,
-    content: typeof m.content === "string" ? m.content.slice(0, 200) : "[tool_results]",
-  }))));
+  console.log(
+    `[claude] Messages (${messages.length}):`,
+    JSON.stringify(
+      messages.map((m) => ({
+        role: m.role,
+        content:
+          typeof m.content === "string"
+            ? m.content.slice(0, 200)
+            : "[tool_results]",
+      })),
+    ),
+  );
 
   let rounds = 0;
 

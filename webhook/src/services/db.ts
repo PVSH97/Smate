@@ -126,7 +126,9 @@ export async function getConversationHistory(
     .order("created_at", { ascending: false })
     .limit(limit);
 
-  const rows = ((data ?? []) as Array<{ role: "user" | "assistant"; content: string }>).reverse();
+  const rows = (
+    (data ?? []) as Array<{ role: "user" | "assistant"; content: string }>
+  ).reverse();
 
   // Merge consecutive same-role messages (Anthropic requires alternating roles)
   const merged: typeof rows = [];
@@ -226,42 +228,51 @@ export async function getCustomerCard(
   ctx: ToolContext,
   input: { customer_id: string },
 ): Promise<object> {
-  const [customer, claims, signals, tasks, opportunities] = await Promise.all([
-    supabase
-      .from("customers")
-      .select(
-        "id, phone, name, trade_name, legal_name, rut, industry, person_type, address_commune, address_city, created_at",
-      )
-      .eq("id", input.customer_id)
-      .single(),
-    supabase
-      .from("claims")
-      .select(
-        "claim_type, product_name, value_normalized, value_unit, raw_value, observed_at, confidence",
-      )
-      .eq("customer_id", input.customer_id)
-      .order("observed_at", { ascending: false })
-      .limit(20),
-    supabase
-      .from("customer_signals")
-      .select("signal_type, content, created_at")
-      .eq("customer_id", input.customer_id)
-      .order("created_at", { ascending: false })
-      .limit(10),
-    supabase
-      .from("tasks")
-      .select("title, priority, status, due_date")
-      .eq("customer_id", input.customer_id)
-      .neq("status", "done")
-      .order("created_at", { ascending: false })
-      .limit(10),
-    supabase
-      .from("opportunities")
-      .select("title, status, estimated_value, confidence")
-      .eq("customer_id", input.customer_id)
-      .order("created_at", { ascending: false })
-      .limit(5),
-  ]);
+  const [customer, claims, signals, tasks, opportunities, approvalRequests] =
+    await Promise.all([
+      supabase
+        .from("customers")
+        .select(
+          "id, phone, name, trade_name, legal_name, rut, industry, person_type, address_commune, address_city, created_at",
+        )
+        .eq("id", input.customer_id)
+        .single(),
+      supabase
+        .from("claims")
+        .select(
+          "claim_type, product_name, value_normalized, value_unit, raw_value, observed_at, confidence",
+        )
+        .eq("customer_id", input.customer_id)
+        .order("observed_at", { ascending: false })
+        .limit(20),
+      supabase
+        .from("customer_signals")
+        .select("signal_type, content, created_at")
+        .eq("customer_id", input.customer_id)
+        .order("created_at", { ascending: false })
+        .limit(10),
+      supabase
+        .from("tasks")
+        .select("title, priority, status, due_date")
+        .eq("customer_id", input.customer_id)
+        .neq("status", "done")
+        .order("created_at", { ascending: false })
+        .limit(10),
+      supabase
+        .from("opportunities")
+        .select("title, status, estimated_value, confidence")
+        .eq("customer_id", input.customer_id)
+        .order("created_at", { ascending: false })
+        .limit(5),
+      supabase
+        .from("approval_requests")
+        .select(
+          "id, status, request_type, requested_amount, requested_unit, authorized_amount, authorized_unit, submitted_at, provider_id",
+        )
+        .eq("customer_id", input.customer_id)
+        .order("submitted_at", { ascending: false })
+        .limit(5),
+    ]);
 
   return {
     customer: customer.data,
@@ -269,6 +280,7 @@ export async function getCustomerCard(
     signals: signals.data ?? [],
     open_tasks: tasks.data ?? [],
     opportunities: opportunities.data ?? [],
+    approval_requests: approvalRequests.data ?? [],
   };
 }
 
@@ -520,4 +532,314 @@ export async function createCustomerBrief(
 
   if (error) return { success: false, error: error.message };
   return { success: true, id: data!.id };
+}
+
+// ============================================================
+// Approval workflow
+// ============================================================
+
+export async function getApprovalRequests(
+  ctx: ToolContext,
+  input: { customer_id?: string; status?: string; limit?: number },
+): Promise<object> {
+  let query = supabase
+    .from("approval_requests")
+    .select(
+      "id, customer_id, provider_id, request_type, requested_amount, requested_unit, submitted_at, status, authorized_amount, authorized_unit, internal_operational_limit, internal_limit_unit, decision_date, decision_reason, next_action, priority",
+    )
+    .eq("org_id", ctx.orgId)
+    .order("submitted_at", { ascending: false })
+    .limit(input.limit ?? 20);
+
+  if (input.customer_id) query = query.eq("customer_id", input.customer_id);
+  if (input.status) query = query.eq("status", input.status);
+
+  const { data: requests, error } = await query;
+  if (error) return { requests: [], error: error.message };
+
+  const requestIds = (requests ?? []).map((r) => r.id);
+  const providerIds = [
+    ...new Set((requests ?? []).map((r) => r.provider_id).filter(Boolean)),
+  ];
+
+  const [providers, events] = await Promise.all([
+    providerIds.length > 0
+      ? supabase
+          .from("approval_providers")
+          .select("id, name")
+          .in("id", providerIds)
+      : Promise.resolve({ data: [] }),
+    requestIds.length > 0
+      ? supabase
+          .from("approval_request_events")
+          .select("request_id, event_type, description, created_at")
+          .in("request_id", requestIds)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const providerMap = new Map(
+    (providers.data ?? []).map((p) => [p.id, p.name]),
+  );
+  const latestEventMap = new Map<string, object>();
+  for (const e of events.data ?? []) {
+    if (!latestEventMap.has(e.request_id)) latestEventMap.set(e.request_id, e);
+  }
+
+  const enriched = (requests ?? []).map((r) => ({
+    ...r,
+    provider_name: providerMap.get(r.provider_id) ?? null,
+    latest_event: latestEventMap.get(r.id) ?? null,
+  }));
+
+  return { requests: enriched, count: enriched.length };
+}
+
+export async function listApprovalProviders(ctx: ToolContext): Promise<object> {
+  const { data, error } = await supabase
+    .from("approval_providers")
+    .select("id, name, provider_type, notes")
+    .eq("org_id", ctx.orgId)
+    .order("name");
+
+  if (error) return { providers: [], error: error.message };
+  return { providers: data ?? [] };
+}
+
+export async function createApprovalProvider(
+  ctx: ToolContext,
+  input: { name: string; provider_type: string; notes?: string },
+): Promise<object> {
+  const { data, error } = await supabase
+    .from("approval_providers")
+    .insert({
+      org_id: ctx.orgId,
+      name: input.name,
+      provider_type: input.provider_type,
+      notes: input.notes,
+    })
+    .select("id")
+    .single();
+
+  if (error) return { success: false, error: error.message };
+  return { success: true, id: data!.id };
+}
+
+export async function createApprovalRequest(
+  ctx: ToolContext,
+  input: {
+    provider_id?: string;
+    provider_name?: string;
+    request_type: string;
+    requested_amount?: number;
+    requested_unit?: string;
+    submitted_at?: string;
+    next_action?: string;
+    priority?: number;
+  },
+): Promise<object> {
+  let providerId = input.provider_id;
+  if (!providerId && input.provider_name) {
+    const { data: provider } = await supabase
+      .from("approval_providers")
+      .select("id")
+      .eq("org_id", ctx.orgId)
+      .ilike("name", input.provider_name)
+      .limit(1)
+      .single();
+    providerId = provider?.id ?? undefined;
+  }
+
+  const { data, error } = await supabase
+    .from("approval_requests")
+    .insert({
+      org_id: ctx.orgId,
+      customer_id: ctx.customerId,
+      provider_id: providerId,
+      conversation_id: ctx.conversationId,
+      request_type: input.request_type,
+      requested_amount: input.requested_amount,
+      requested_unit: input.requested_unit,
+      submitted_at: input.submitted_at ?? new Date().toISOString().slice(0, 10),
+      next_action: input.next_action,
+      priority: input.priority ?? 3,
+    })
+    .select("id")
+    .single();
+
+  if (error) return { success: false, error: error.message };
+
+  await supabase.from("approval_request_events").insert({
+    request_id: data!.id,
+    event_type: "SUBMITTED",
+    description: `Solicitud ${input.request_type} creada${input.requested_amount ? ` por ${input.requested_amount} ${input.requested_unit ?? ""}` : ""}`,
+  });
+
+  return { success: true, id: data!.id };
+}
+
+export async function updateApprovalRequest(
+  ctx: ToolContext,
+  input: {
+    request_id: string;
+    status?: string;
+    authorized_amount?: number;
+    authorized_unit?: string;
+    internal_operational_limit?: number;
+    internal_limit_unit?: string;
+    decision_date?: string;
+    decision_reason?: string;
+    next_action?: string;
+  },
+): Promise<object> {
+  const updates: Record<string, unknown> = {};
+  if (input.status) updates.status = input.status;
+  if (input.authorized_amount !== undefined)
+    updates.authorized_amount = input.authorized_amount;
+  if (input.authorized_unit) updates.authorized_unit = input.authorized_unit;
+  if (input.internal_operational_limit !== undefined)
+    updates.internal_operational_limit = input.internal_operational_limit;
+  if (input.internal_limit_unit)
+    updates.internal_limit_unit = input.internal_limit_unit;
+  if (input.decision_date) updates.decision_date = input.decision_date;
+  if (input.decision_reason) updates.decision_reason = input.decision_reason;
+  if (input.next_action !== undefined) updates.next_action = input.next_action;
+
+  const { error } = await supabase
+    .from("approval_requests")
+    .update(updates)
+    .eq("id", input.request_id)
+    .eq("org_id", ctx.orgId);
+
+  if (error) return { success: false, error: error.message };
+
+  if (input.status) {
+    const eventTypeMap: Record<string, string> = {
+      APPROVED: "DECISION_RECEIVED",
+      PARTIAL_APPROVED: "DECISION_RECEIVED",
+      REJECTED: "DECISION_RECEIVED",
+      APPEALED: "APPEAL_SUBMITTED",
+      IN_REVIEW: "NOTE",
+      CLOSED: "NOTE",
+    };
+    const eventType = eventTypeMap[input.status] ?? "NOTE";
+    await supabase.from("approval_request_events").insert({
+      request_id: input.request_id,
+      event_type: eventType,
+      description: `Estado cambiado a ${input.status}${input.decision_reason ? `: ${input.decision_reason}` : ""}`,
+    });
+  }
+
+  return { success: true, id: input.request_id };
+}
+
+export async function addApprovalEvent(
+  ctx: ToolContext,
+  input: { request_id: string; event_type: string; description: string },
+): Promise<object> {
+  const { data, error } = await supabase
+    .from("approval_request_events")
+    .insert({
+      request_id: input.request_id,
+      event_type: input.event_type,
+      description: input.description,
+    })
+    .select("id")
+    .single();
+
+  if (error) return { success: false, error: error.message };
+
+  const statusMap: Record<string, string> = {
+    APPEAL_SUBMITTED: "APPEALED",
+    APPEAL_RESOLVED: "CLOSED",
+  };
+  const newStatus = statusMap[input.event_type];
+  if (newStatus) {
+    await supabase
+      .from("approval_requests")
+      .update({ status: newStatus })
+      .eq("id", input.request_id)
+      .eq("org_id", ctx.orgId);
+  }
+
+  return { success: true, id: data!.id };
+}
+
+// ============================================================
+// Generic update tools
+// ============================================================
+
+export async function updateTaskStatus(
+  ctx: ToolContext,
+  input: { task_id: string; status: string; snoozed_until?: string },
+): Promise<object> {
+  const updates: Record<string, unknown> = { status: input.status };
+  if (input.snoozed_until) updates.snoozed_until = input.snoozed_until;
+
+  const { error } = await supabase
+    .from("tasks")
+    .update(updates)
+    .eq("id", input.task_id)
+    .eq("org_id", ctx.orgId);
+
+  if (error) return { success: false, error: error.message };
+  return { success: true, id: input.task_id };
+}
+
+export async function updateOpportunityStage(
+  ctx: ToolContext,
+  input: {
+    opportunity_id: string;
+    stage: string;
+    probability?: number;
+    reason_no_progress?: string;
+    next_step?: string;
+  },
+): Promise<object> {
+  const updates: Record<string, unknown> = { stage: input.stage };
+  if (input.probability !== undefined) updates.probability = input.probability;
+  if (input.reason_no_progress)
+    updates.reason_no_progress = input.reason_no_progress;
+  if (input.next_step) updates.next_step = input.next_step;
+
+  const { error } = await supabase
+    .from("opportunities")
+    .update(updates)
+    .eq("id", input.opportunity_id)
+    .eq("org_id", ctx.orgId);
+
+  if (error) return { success: false, error: error.message };
+  return { success: true, id: input.opportunity_id };
+}
+
+export async function updateCustomer(
+  ctx: ToolContext,
+  input: {
+    customer_id: string;
+    name?: string;
+    trade_name?: string;
+    phone?: string;
+    rut?: string;
+    industry?: string;
+    address_commune?: string;
+    address_city?: string;
+  },
+): Promise<object> {
+  const updates: Record<string, unknown> = {};
+  if (input.name) updates.name = input.name;
+  if (input.trade_name) updates.trade_name = input.trade_name;
+  if (input.phone) updates.phone = input.phone;
+  if (input.rut) updates.rut = input.rut;
+  if (input.industry) updates.industry = input.industry;
+  if (input.address_commune) updates.address_commune = input.address_commune;
+  if (input.address_city) updates.address_city = input.address_city;
+
+  const { error } = await supabase
+    .from("customers")
+    .update(updates)
+    .eq("id", input.customer_id)
+    .eq("org_id", ctx.orgId);
+
+  if (error) return { success: false, error: error.message };
+  return { success: true, id: input.customer_id };
 }

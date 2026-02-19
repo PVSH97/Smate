@@ -57,6 +57,40 @@ export const tools: Anthropic.Tool[] = [
       required: ["query"],
     },
   },
+  {
+    name: "get_approval_requests",
+    description:
+      "Get approval/credit requests for a customer or filter by status. Returns requests with provider info and latest events.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        customer_id: {
+          type: "string",
+          description: "UUID of the customer (optional — omit to get all)",
+        },
+        status: {
+          type: "string",
+          description:
+            "Filter by status: SUBMITTED, IN_REVIEW, APPROVED, PARTIAL_APPROVED, REJECTED, APPEALED, CLOSED",
+        },
+        limit: {
+          type: "number",
+          description: "Max results (default 20)",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "list_approval_providers",
+    description:
+      "List all approval providers configured for this organization (credit insurers, banks, internal committees, etc.).",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
   // ── Write tool (Mode B gateway) ────────────────────────────
   {
     name: "parse_to_draft",
@@ -83,6 +117,13 @@ export const tools: Anthropic.Tool[] = [
                   "create_claims",
                   "create_customer_brief",
                   "upsert_sku_packaging",
+                  "create_approval_provider",
+                  "create_approval_request",
+                  "update_approval_request",
+                  "add_approval_event",
+                  "update_task_status",
+                  "update_opportunity_stage",
+                  "update_customer",
                 ],
                 description: "Which persistence tool to execute",
               },
