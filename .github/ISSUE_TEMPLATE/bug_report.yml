@@ -1,0 +1,41 @@
+name: Bug Report
+description: Algo no funciona como se espera / Something isn't working
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Que paso? / What happened?
+      description: Describe lo que ocurrio. Puedes pegar tu conversacion con SMate.
+      placeholder: "Ej: Le mande una tabla de precios y solo guardo los pesos, no los precios"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Que esperabas? / What did you expect?
+      description: Que deberia haber pasado en vez de lo que paso.
+      placeholder: "Ej: Deberia haber guardado precios Y pesos de cada SKU"
+    validations:
+      required: true
+  - type: textarea
+    id: messages
+    attributes:
+      label: Mensajes exactos (copiar/pegar)
+      description: Copia los mensajes relevantes de WhatsApp. Esto es lo mas importante para debuggear.
+      placeholder: |
+        Yo: "Atun lomo 20kg $7.350/kg"
+        SMate: "Guardado solo peso de caja..."
+    validations:
+      required: false
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Gravedad / Severity
+      options:
+        - Molesto pero funciona / Annoying but works
+        - Datos incorrectos / Wrong data saved
+        - No responde / No response
+        - Pierde datos / Data loss
+    validations:
+      required: true

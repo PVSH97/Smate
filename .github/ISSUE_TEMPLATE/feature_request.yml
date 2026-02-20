@@ -1,0 +1,40 @@
+name: Feature / Mejora
+description: Idea para una nueva funcionalidad o mejora
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema o necesidad
+      description: Que situacion te motiva a pedir esto?
+      placeholder: "Ej: Cuando mando muchos productos, SMate no los agrupa por cliente"
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Solucion propuesta
+      description: Como te gustaria que funcionara?
+      placeholder: "Ej: Que al mandar una tabla, SMate pregunte a que cliente asociarla"
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Ejemplo de uso
+      description: Un ejemplo concreto de como se usaria.
+      placeholder: |
+        Yo: "Esta es la propuesta para Boka SPA: [tabla]"
+        SMate: "Detecte 12 productos para Boka SPA con precios..."
+    validations:
+      required: false
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Prioridad / Priority
+      options:
+        - Nice to have
+        - Importante / Important
+        - Urgente / Urgent
+    validations:
+      required: true

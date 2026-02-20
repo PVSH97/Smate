@@ -1,0 +1,27 @@
+name: Feedback general
+description: Observacion, sugerencia, o comentario sobre el comportamiento de SMate
+labels: ["feedback"]
+body:
+  - type: textarea
+    id: observation
+    attributes:
+      label: Observacion
+      description: Que observaste? Puede ser algo bueno, malo, o raro.
+      placeholder: "Ej: Cuando pregunto por un precio, SMate se confunde con los numeros del historial"
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto
+      description: Cuando paso esto? Con que cliente/producto?
+      placeholder: "Ej: Estaba preguntando por la propuesta de Boka SPA, producto atun lomo"
+    validations:
+      required: false
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Sugerencia
+      description: Tienes alguna idea de como mejorarlo?
+    validations:
+      required: false
