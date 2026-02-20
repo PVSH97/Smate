@@ -766,6 +766,115 @@ export async function addApprovalEvent(
 }
 
 // ============================================================
+// Product equivalences
+// ============================================================
+
+export async function getProductEquivalences(
+  ctx: ToolContext,
+  input: { internal_sku?: string; competitor_name?: string },
+): Promise<object> {
+  let query = supabase
+    .from("product_equivalences")
+    .select(
+      "id, internal_sku, competitor_name, competitor_supplier, notes, confirmed_by_customer_id, created_at",
+    )
+    .eq("org_id", ctx.orgId);
+
+  if (input.internal_sku) query = query.eq("internal_sku", input.internal_sku);
+  if (input.competitor_name)
+    query = query.ilike("competitor_name", `%${input.competitor_name}%`);
+
+  const { data, error } = await query
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (error) return { equivalences: [], error: error.message };
+  return { equivalences: data ?? [], count: (data ?? []).length };
+}
+
+export async function createProductEquivalence(
+  ctx: ToolContext,
+  input: {
+    internal_sku: string;
+    competitor_name: string;
+    competitor_supplier?: string;
+    notes?: string;
+  },
+): Promise<object> {
+  const { data, error } = await supabase
+    .from("product_equivalences")
+    .upsert(
+      {
+        org_id: ctx.orgId,
+        internal_sku: input.internal_sku,
+        competitor_name: input.competitor_name,
+        competitor_supplier: input.competitor_supplier,
+        notes: input.notes,
+        confirmed_by_customer_id: ctx.customerId,
+        conversation_id: ctx.conversationId,
+      },
+      { onConflict: "org_id,internal_sku,competitor_name" },
+    )
+    .select("id")
+    .single();
+
+  if (error) return { success: false, error: error.message };
+  return { success: true, id: data!.id };
+}
+
+// ============================================================
+// Cross-customer agenda
+// ============================================================
+
+export async function getPendingTasks(
+  ctx: ToolContext,
+  input: {
+    status?: string;
+    due_before?: string;
+    due_after?: string;
+    limit?: number;
+  },
+): Promise<object> {
+  const statuses = input.status ? [input.status] : ["pending", "in_progress"];
+
+  let query = supabase
+    .from("tasks")
+    .select(
+      "id, title, description, priority, status, due_date, customer_id, created_at",
+    )
+    .eq("org_id", ctx.orgId)
+    .in("status", statuses)
+    .order("priority", { ascending: false })
+    .order("due_date", { ascending: true })
+    .limit(input.limit ?? 30);
+
+  if (input.due_before) query = query.lte("due_date", input.due_before);
+  if (input.due_after) query = query.gte("due_date", input.due_after);
+
+  const { data: tasks, error } = await query;
+  if (error) return { tasks: [], error: error.message };
+
+  // Enrich with customer names
+  const customerIds = [
+    ...new Set((tasks ?? []).map((t) => t.customer_id).filter(Boolean)),
+  ];
+  let customerMap = new Map<string, string>();
+  if (customerIds.length > 0) {
+    const { data: customers } = await supabase
+      .from("customers")
+      .select("id, name")
+      .in("id", customerIds);
+    customerMap = new Map((customers ?? []).map((c) => [c.id, c.name]));
+  }
+
+  const enriched = (tasks ?? []).map((t) => ({
+    ...t,
+    customer_name: customerMap.get(t.customer_id) ?? null,
+  }));
+
+  return { tasks: enriched, count: enriched.length };
+}
+
+// ============================================================
 // Generic update tools
 // ============================================================
 

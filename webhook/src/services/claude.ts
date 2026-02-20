@@ -46,6 +46,11 @@ Ejemplos de consultas:
 - "Cuál es el estado de la aprobación de Cliente X?" → find_customer → get_approval_requests(customer_id)
 - "Qué aprobaciones están pendientes?" → get_approval_requests(status: "SUBMITTED")
 - "Cuánto fue aprobado para Cliente X?" → get_approval_requests(customer_id) → muestra authorized vs requested
+- "Qué equivalencias tenemos para el 36/40?" → get_product_equivalences(internal_sku: "CAM36CRPYDE10")
+- "Tenemos algo equivalente al Southwind?" → get_product_equivalences(competitor_name: "Southwind")
+- "Qué tengo pendiente?" → get_pending_tasks()
+- "Qué tengo para esta semana?" → get_pending_tasks(due_before: "YYYY-MM-DD") con fecha del viernes
+- "Tareas urgentes?" → get_pending_tasks() → filtra por priority >= 4
 
 ## Reglas de extracción (CRÍTICAS)
 - Los mensajes del historial tienen el tag [HISTORIAL - contexto, NO extraer]. NUNCA extraigas datos de ellos.
@@ -69,6 +74,8 @@ Cuando el vendedor CORRIGE un dato ("no, es X", "nopo, son Y", "el precio era Z"
 - \`search_messages\`: Busca mensajes antiguos por palabra clave.
 - \`get_approval_requests\`: Solicitudes de aprobación/crédito. Filtra por customer_id y/o status. Retorna proveedor y último evento.
 - \`list_approval_providers\`: Lista proveedores de aprobación configurados (aseguradoras, bancos, comités).
+- \`get_product_equivalences\`: Equivalencias producto competidor ↔ SKU interno. Filtrar por internal_sku o competitor_name.
+- \`get_pending_tasks\`: Todas las tareas pendientes cross-cliente. Filtra por status y rango de fechas.
 
 ## Herramientas de escritura (vía parse_to_draft)
 Todas se envían dentro de \`parse_to_draft.items[].tool\`:
@@ -99,6 +106,7 @@ Herramientas de actualización:
 - \`update_task_status\`: Cambiar estado de tarea (task_id, status: pending|in_progress|done|cancelled|snoozed)
 - \`update_opportunity_stage\`: Cambiar etapa de oportunidad (opportunity_id, stage, probability, next_step)
 - \`update_customer\`: Actualizar datos del cliente (customer_id, name, trade_name, phone, rut, industry, address_commune, address_city)
+- \`create_product_equivalence\`: Mapear producto competidor a SKU interno (internal_sku, competitor_name, competitor_supplier)
 
 ## Schema exacto de create_claims
 \`\`\`
@@ -152,6 +160,20 @@ Normalización: toneladas→kg (*1000), quintal→kg (*46), semanal→mensual (*
   "description": "Llamé a Solunion, están revisando documentos"
 }
 \`\`\`
+
+## Schema de create_product_equivalence
+\`\`\`
+{
+  "internal_sku": "CAM36CRPYDE10",
+  "competitor_name": "Southwind 36/40",
+  "competitor_supplier": "Southwind"
+}
+\`\`\`
+
+## Reglas de extracción de equivalencias
+Cuando el vendedor diga que un producto competidor es igual al suyo:
+- "el Southwind 36/40 es igual a nuestro CAM36CRPYDE10" → create_product_equivalence
+- "el producto X de Y equivale a nuestro Z" → create_product_equivalence
 
 ## Reglas de extracción de aprobaciones
 Cuando el vendedor mencione:
@@ -305,15 +327,21 @@ async function handleAmbiguousConfirmation(
 }
 
 async function buildSystemPrompt(conversationId: string): Promise<string> {
+  const today = new Date().toISOString().slice(0, 10);
   const recentDrafts = await getRecentDraftSummaries(conversationId);
-  if (recentDrafts.length === 0) return BASE_SYSTEM_PROMPT;
 
-  const draftContext = recentDrafts.join("\n");
-  return `${BASE_SYSTEM_PROMPT}
+  let prompt = `${BASE_SYSTEM_PROMPT}\n\nFecha actual: ${today}`;
+
+  if (recentDrafts.length > 0) {
+    const draftContext = recentDrafts.join("\n");
+    prompt += `
 
 ## Datos ya procesados (NO re-extraigas)
 Los siguientes datos YA fueron guardados o descartados. NO los vuelvas a incluir en un draft:
 ${draftContext}`;
+  }
+
+  return prompt;
 }
 
 async function runToolLoop(

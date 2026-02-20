@@ -20,6 +20,9 @@ import {
   updateTaskStatus,
   updateOpportunityStage,
   updateCustomer,
+  getProductEquivalences,
+  createProductEquivalence,
+  getPendingTasks,
 } from "../services/db.js";
 import { createDraft, type DraftItem } from "../services/drafts.js";
 
@@ -44,6 +47,10 @@ export async function handleToolCall(
       return JSON.stringify(await getApprovalRequests(ctx, input as never));
     case "list_approval_providers":
       return JSON.stringify(await listApprovalProviders(ctx));
+    case "get_product_equivalences":
+      return JSON.stringify(await getProductEquivalences(ctx, input as never));
+    case "get_pending_tasks":
+      return JSON.stringify(await getPendingTasks(ctx, input as never));
     // Write tool (Mode B gateway)
     case "parse_to_draft": {
       const items = input.items as DraftItem[];
@@ -114,6 +121,9 @@ export async function executeDraftItem(
         break;
       case "update_customer":
         result = await updateCustomer(ctx, item.input as never);
+        break;
+      case "create_product_equivalence":
+        result = await createProductEquivalence(ctx, item.input as never);
         break;
       default:
         return { success: false, error: `Unknown tool: ${item.tool}` };

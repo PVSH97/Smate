@@ -91,6 +91,52 @@ export const tools: Anthropic.Tool[] = [
       required: [],
     },
   },
+  {
+    name: "get_product_equivalences",
+    description:
+      "Search product equivalences: competitor products mapped to internal SKUs. Filter by internal_sku (exact) or competitor_name (partial match).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        internal_sku: {
+          type: "string",
+          description: "Internal SKU code (exact match)",
+        },
+        competitor_name: {
+          type: "string",
+          description: "Competitor product name (partial match)",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_pending_tasks",
+    description:
+      "Get all open tasks across all customers. Use for agenda/to-do queries like 'qué tengo pendiente?' or 'qué tengo esta semana?'.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        status: {
+          type: "string",
+          description: "Filter by status (default: pending + in_progress)",
+        },
+        due_before: {
+          type: "string",
+          description: "Only tasks due on or before this date (YYYY-MM-DD)",
+        },
+        due_after: {
+          type: "string",
+          description: "Only tasks due on or after this date (YYYY-MM-DD)",
+        },
+        limit: {
+          type: "number",
+          description: "Max results (default 30)",
+        },
+      },
+      required: [],
+    },
+  },
   // ── Write tool (Mode B gateway) ────────────────────────────
   {
     name: "parse_to_draft",
@@ -124,6 +170,7 @@ export const tools: Anthropic.Tool[] = [
                   "update_task_status",
                   "update_opportunity_stage",
                   "update_customer",
+                  "create_product_equivalence",
                 ],
                 description: "Which persistence tool to execute",
               },
