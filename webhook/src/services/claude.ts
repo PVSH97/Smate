@@ -252,7 +252,7 @@ async function handleAmbiguousConfirmation(
   ];
 
   const response = await client.messages.create({
-    model: "claude-sonnet-4-6-20250514",
+    model: "claude-sonnet-4-20250514",
     max_tokens: 512,
     system: `El usuario tiene un draft pendiente con este resumen:\n"${draftSummary}"\n\nInterpreta su respuesta. Si quiere confirmar, responde EXACTAMENTE "CONFIRM". Si quiere descartar, responde EXACTAMENTE "DISCARD". Si quiere editar o no es claro, explica las opciones disponibles: *OK* para guardar, *EDITAR* para modificar, *SKIP* para descartar.`,
     messages,
@@ -334,7 +334,7 @@ async function runToolLoop(
 
   while (rounds < MAX_TOOL_ROUNDS) {
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6-20250514",
+      model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
       system: systemPrompt,
       tools,
@@ -394,7 +394,7 @@ async function runToolLoop(
   }
 
   const finalResponse = await client.messages.create({
-    model: "claude-sonnet-4-6-20250514",
+    model: "claude-sonnet-4-20250514",
     max_tokens: 512,
     system: systemPrompt,
     messages,
