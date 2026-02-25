@@ -6,7 +6,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "find_customer",
     description:
-      "Fuzzy search for a customer by name, phone, or RUT. Returns top 3 matches with confidence scores. Use before creating a new customer to avoid duplicates.",
+      "Fuzzy search for a customer by name, phone, or RUT. Returns top 3 matches with confidence scores. Use before creating a new customer to avoid duplicates. If not found, proceed with the data you have — don't block the conversation.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -141,7 +141,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "parse_to_draft",
     description:
-      "Package ALL commercial data you want to persist into a single draft for user confirmation. This is your ONLY way to save data — never persist directly. Each item specifies the tool and its input. After calling this, present the summary to the user and ask them to confirm.",
+      "Save commercial data detected in the conversation. Groups all items for user confirmation before persisting. CRITICAL: Your summary to the user must use plain business language. Never mention tool names, field names, schemas, or processing steps. Show a clean commercial preview of what will be saved.",
     input_schema: {
       type: "object" as const,
       properties: {

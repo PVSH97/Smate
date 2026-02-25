@@ -116,7 +116,7 @@ export async function saveMessage(
 
 export async function getConversationHistory(
   conversationId: string,
-  limit = 6,
+  limit = 10,
 ): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
   // Fetch most recent messages (descending), then reverse to chronological
   const { data } = await supabase
